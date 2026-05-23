@@ -119,9 +119,9 @@ NAV_TABS = [
 ]
 
 
-def _ctx(request: Request, active: str, **extra) -> dict:
+def _ctx(active: str, **extra) -> dict:
+    """生成模板上下文（不含 request，新版 TemplateResponse 单独传）。"""
     return {
-        "request": request,
         "tabs": NAV_TABS,
         "active_tab": active,
         "version": "2.0.0",
@@ -131,37 +131,37 @@ def _ctx(request: Request, active: str, **extra) -> dict:
 
 @app.get("/", response_class=HTMLResponse)
 async def page_dashboard(request: Request):
-    return templates.TemplateResponse("tabs/dashboard.html", _ctx(request, "dashboard"))
+    return templates.TemplateResponse(request, "tabs/dashboard.html", _ctx("dashboard"))
 
 
 @app.get("/market", response_class=HTMLResponse)
 async def page_market(request: Request):
-    return templates.TemplateResponse("tabs/market.html", _ctx(request, "market"))
+    return templates.TemplateResponse(request, "tabs/market.html", _ctx("market"))
 
 
 @app.get("/sector", response_class=HTMLResponse)
 async def page_sector(request: Request):
-    return templates.TemplateResponse("tabs/sector.html", _ctx(request, "sector"))
+    return templates.TemplateResponse(request, "tabs/sector.html", _ctx("sector"))
 
 
 @app.get("/scanner", response_class=HTMLResponse)
 async def page_scanner(request: Request):
-    return templates.TemplateResponse("tabs/scanner.html", _ctx(request, "scanner"))
+    return templates.TemplateResponse(request, "tabs/scanner.html", _ctx("scanner"))
 
 
 @app.get("/watchlist", response_class=HTMLResponse)
 async def page_watchlist(request: Request):
-    return templates.TemplateResponse("tabs/watchlist.html", _ctx(request, "watchlist"))
+    return templates.TemplateResponse(request, "tabs/watchlist.html", _ctx("watchlist"))
 
 
 @app.get("/archive", response_class=HTMLResponse)
 async def page_archive(request: Request):
-    return templates.TemplateResponse("tabs/archive.html", _ctx(request, "archive"))
+    return templates.TemplateResponse(request, "tabs/archive.html", _ctx("archive"))
 
 
 @app.get("/settings", response_class=HTMLResponse)
 async def page_settings(request: Request):
-    return templates.TemplateResponse("tabs/settings.html", _ctx(request, "settings"))
+    return templates.TemplateResponse(request, "tabs/settings.html", _ctx("settings"))
 
 
 # ============ 公共API（兼容原 health 路径）============
