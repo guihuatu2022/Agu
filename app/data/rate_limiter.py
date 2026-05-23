@@ -25,35 +25,35 @@ logger = logging.getLogger(__name__)
 
 
 # ============ 频率配置 ============
-# 用户确认 token 上限 300/分钟，按每个接口分配 + 留余量
+# 用户确认 token 上限 470/分钟，按每个接口分配 + 留余量
 
 INTERFACE_LIMITS: dict[str, dict] = {
     # 默认（用于未明确配置的接口）
-    "_default":     {"per_min": 200, "min_interval": 0.3},
+    "_default":     {"per_min": 300, "min_interval": 0.2},
 
     # 行情类（最常用）
-    "daily":        {"per_min": 280, "min_interval": 0.2},
-    "daily_basic":  {"per_min": 280, "min_interval": 0.2},
-    "moneyflow":    {"per_min": 250, "min_interval": 0.25},
-    "adj_factor":   {"per_min": 250, "min_interval": 0.25},
-    "index_daily":  {"per_min": 200, "min_interval": 0.3},
+    "daily":        {"per_min": 450, "min_interval": 0.13},
+    "daily_basic":  {"per_min": 450, "min_interval": 0.13},
+    "moneyflow":    {"per_min": 400, "min_interval": 0.15},
+    "adj_factor":   {"per_min": 400, "min_interval": 0.15},
+    "index_daily":  {"per_min": 300, "min_interval": 0.2},
 
     # 元数据（很少调用）
-    "stock_basic":  {"per_min": 60,  "min_interval": 1.0},
-    "trade_cal":    {"per_min": 60,  "min_interval": 1.0},
+    "stock_basic":  {"per_min": 100, "min_interval": 0.6},
+    "trade_cal":    {"per_min": 100, "min_interval": 0.6},
 
     # 概念板块
-    "concept":          {"per_min": 60,  "min_interval": 1.0},
-    "concept_detail":   {"per_min": 200, "min_interval": 0.3},
+    "concept":          {"per_min": 100, "min_interval": 0.6},
+    "concept_detail":   {"per_min": 300, "min_interval": 0.2},
 
     # 其他
-    "top_list":     {"per_min": 100, "min_interval": 0.6},
-    "top_inst":     {"per_min": 100, "min_interval": 0.6},
+    "top_list":     {"per_min": 200, "min_interval": 0.3},
+    "top_inst":     {"per_min": 200, "min_interval": 0.3},
 }
 
 
 # 全局所有接口共用的间隔（防止突发，最低保护）
-GLOBAL_MIN_INTERVAL = 0.15
+GLOBAL_MIN_INTERVAL = 0.1
 
 
 class RateLimiter:
