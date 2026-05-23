@@ -196,8 +196,8 @@ async def initialize_database(skip_existing: bool = True) -> AsyncIterator[dict]
         failed_days = []
         skipped_days = 0
 
-        # 用线程池并发拉取（每个日期 4 个接口同时跑）
-        executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="tushare")
+        # 用线程池并发拉取（每个日期 4 个接口同时跑，多日期可以提前预热）
+        executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix="tushare")
 
         def _fetch_one_day(td_date_str: str, td_date_obj: date) -> dict:
             """并发拉一天的所有数据。返回 {daily, adj, basic, flow}"""

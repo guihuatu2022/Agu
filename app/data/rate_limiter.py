@@ -73,20 +73,14 @@ class RateLimiter:
         with self._lock:
             now = time.time()
 
-            # 1. 单接口间隔
+            # 1. 单接口间隔（防止单接口爆发）
             elapsed = now - self._last_call
             if elapsed < self.min_interval:
                 sleep_t = self.min_interval - elapsed
                 time.sleep(sleep_t)
                 now = time.time()
 
-            # 2. 全局间隔（保护其他接口）
-            global_elapsed = now - _GlobalState.last_any_call
-            if global_elapsed < GLOBAL_MIN_INTERVAL:
-                time.sleep(GLOBAL_MIN_INTERVAL - global_elapsed)
-                now = time.time()
-
-            # 3. 滑动窗口（60秒内不超 per_min）
+            # 2. 滑动窗口（60秒内不超 per_min）
             cutoff = now - 60.0
             while self._calls and self._calls[0] < cutoff:
                 self._calls.popleft()
@@ -102,7 +96,6 @@ class RateLimiter:
 
             self._calls.append(now)
             self._last_call = now
-            _GlobalState.last_any_call = now
 
 
 class _GlobalState:
