@@ -1,0 +1,245 @@
+{% extends "base.html" %}
+{% block title %}全市场扫描 · 股票趋势分析{% endblock %}
+
+{% block extra_head %}
+<style>
+.scanner-layout { display: flex; gap: 1rem; }
+.scanner-filters {
+    flex: 0 0 360px;
+    max-height: calc(100vh - 120px);
+    overflow-y: auto;
+}
+.scanner-results { flex: 1; min-width: 0; }
+@media (max-width: 992px) {
+    .scanner-layout { flex-direction: column; }
+    .scanner-filters { flex: 0 0 auto; max-height: none; }
+}
+.preset-card {
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.preset-card:hover {
+    background: var(--bg-hover);
+    border-color: var(--accent-blue);
+}
+.range-input { display: flex; gap: 0.5rem; align-items: center; }
+.range-input .form-control { text-align: right; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="scanner-layout">
+    <!-- 左栏：筛选条件 -->
+    <div class="scanner-filters">
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-funnel"></i> 筛选条件</span>
+                <button class="btn btn-sm btn-outline-secondary" id="btnReset">重置</button>
+            </div>
+
+            <!-- 预设方案 -->
+            <div class="card-body border-bottom border-secondary">
+                <div class="small text-muted mb-2">📌 快速预设</div>
+                <div class="d-grid gap-2">
+                    <div class="preset-card card border-secondary p-2 small" data-preset="high_certainty">
+                        🟢 <strong>最高确定性</strong>
+                        <div class="text-muted">机构主导+拉升中期+板块强势</div>
+                    </div>
+                    <div class="preset-card card border-secondary p-2 small" data-preset="fast_entry">
+                        ⚡ <strong>最快右侧介入</strong>
+                        <div class="text-muted">拉升期第1-3天</div>
+                    </div>
+                    <div class="preset-card card border-secondary p-2 small" data-preset="accumulation">
+                        🟠 <strong>吸筹后期布局</strong>
+                        <div class="text-muted">主力建仓完成待启动</div>
+                    </div>
+                    <div class="preset-card card border-secondary p-2 small" data-preset="dragon_return">
+                        🎯 <strong>龙头回马枪</strong>
+                        <div class="text-muted">洗盘后再次启动</div>
+                    </div>
+                    <div class="preset-card card border-secondary p-2 small" data-preset="left_watch">
+                        🔵 <strong>左侧观察名单</strong>
+                        <div class="text-muted">跌透+反转苗头</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 8组手风琴筛选 -->
+            <div class="accordion accordion-flush" id="filterAccordion">
+                <!-- 组1：主力情况 -->
+                <div class="accordion-item">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#g1">
+                            🎯 1. 主力情况 <span class="text-danger ms-1">*</span>
+                        </button>
+                    </h2>
+                    <div id="g1" class="accordion-collapse collapse show" data-bs-parent="#filterAccordion">
+                        <div class="accordion-body">
+                            <div class="mb-2">
+                                <label class="form-label small">是否有主力</label>
+                                <div class="btn-group w-100" role="group">
+                                    <input type="radio" class="btn-check" name="hasForce" id="hf1" value="required" checked>
+                                    <label class="btn btn-sm btn-outline-secondary" for="hf1">必须有</label>
+                                    <input type="radio" class="btn-check" name="hasForce" id="hf2" value="optional">
+                                    <label class="btn btn-sm btn-outline-secondary" for="hf2">可选</label>
+                                    <input type="radio" class="btn-check" name="hasForce" id="hf3" value="forbidden">
+                                    <label class="btn btn-sm btn-outline-secondary" for="hf3">必须无</label>
+                                </div>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label small">主力性质</label>
+                                <div class="form-check"><input class="form-check-input" type="checkbox" value="机构主导" checked id="ft1"><label class="form-check-label small" for="ft1">机构主导</label></div>
+                                <div class="form-check"><input class="form-check-input" type="checkbox" value="游资主导" id="ft2"><label class="form-check-label small" for="ft2">游资主导</label></div>
+                                <div class="form-check"><input class="form-check-input" type="checkbox" value="机构+游资混战" id="ft3"><label class="form-check-label small" for="ft3">机构+游资混战</label></div>
+                                <div class="form-check"><input class="form-check-input" type="checkbox" value="散户为主（无明显主力）" id="ft4"><label class="form-check-label small" for="ft4">散户为主</label></div>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label small">控盘程度 (%)</label>
+                                <div class="range-input">
+                                    <input type="number" class="form-control form-control-sm" data-range="control_min" min="0" max="100" value="60">
+                                    <span class="text-muted">~</span>
+                                    <input type="number" class="form-control form-control-sm" data-range="control_max" min="0" max="100" value="100">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 组2：主力阶段 -->
+                <div class="accordion-item">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#g2">
+                            📊 2. 主力阶段
+                        </button>
+                    </h2>
+                    <div id="g2" class="accordion-collapse collapse" data-bs-parent="#filterAccordion">
+                        <div class="accordion-body">
+                            <label class="form-label small">阶段（多选）</label>
+                            <div class="form-check"><input class="form-check-input" type="checkbox" value="拉升期-初期" checked><label class="form-check-label small">拉升期-初期</label></div>
+                            <div class="form-check"><input class="form-check-input" type="checkbox" value="拉升期-中期" checked><label class="form-check-label small">拉升期-中期</label></div>
+                            <div class="form-check"><input class="form-check-input" type="checkbox" value="拉升期-加速期"><label class="form-check-label small">拉升期-加速期</label></div>
+                            <div class="form-check"><input class="form-check-input" type="checkbox" value="启动期"><label class="form-check-label small">启动期</label></div>
+                            <div class="form-check"><input class="form-check-input" type="checkbox" value="洗盘期"><label class="form-check-label small">洗盘期</label></div>
+                            <div class="form-check"><input class="form-check-input" type="checkbox" value="吸筹期-后期"><label class="form-check-label small">吸筹期-后期</label></div>
+                            <hr class="my-2">
+                            <label class="form-label small">进入阶段第几天</label>
+                            <div class="range-input">
+                                <input type="number" class="form-control form-control-sm" data-range="day_min" min="1" max="365" value="1">
+                                <span class="text-muted">~</span>
+                                <input type="number" class="form-control form-control-sm" data-range="day_max" min="1" max="365" value="5">
+                            </div>
+                            <div class="mt-2">
+                                <label class="form-label small">阶段确定度 ≥</label>
+                                <input type="number" class="form-control form-control-sm" min="0" max="100" value="70">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 组3-8 占位（后期填充） -->
+                <div class="accordion-item">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#g3">🔥 3. 板块联动</button>
+                    </h2>
+                    <div id="g3" class="accordion-collapse collapse" data-bs-parent="#filterAccordion">
+                        <div class="accordion-body text-muted small">待数据加载后启用</div>
+                    </div>
+                </div>
+                <div class="accordion-item">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#g4">📈 4. 大盘环境</button>
+                    </h2>
+                    <div id="g4" class="accordion-collapse collapse" data-bs-parent="#filterAccordion">
+                        <div class="accordion-body text-muted small">待数据加载后启用</div>
+                    </div>
+                </div>
+                <div class="accordion-item">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#g5">🔧 5. 技术面</button>
+                    </h2>
+                    <div id="g5" class="accordion-collapse collapse" data-bs-parent="#filterAccordion">
+                        <div class="accordion-body text-muted small">待数据加载后启用</div>
+                    </div>
+                </div>
+                <div class="accordion-item">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#g6">💰 6. 资金维度</button>
+                    </h2>
+                    <div id="g6" class="accordion-collapse collapse" data-bs-parent="#filterAccordion">
+                        <div class="accordion-body text-muted small">待数据加载后启用</div>
+                    </div>
+                </div>
+                <div class="accordion-item">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#g7">🛡 7. 质地过滤</button>
+                    </h2>
+                    <div id="g7" class="accordion-collapse collapse" data-bs-parent="#filterAccordion">
+                        <div class="accordion-body text-muted small">待数据加载后启用</div>
+                    </div>
+                </div>
+                <div class="accordion-item">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#g8">🟢 8. 机会等级</button>
+                    </h2>
+                    <div id="g8" class="accordion-collapse collapse" data-bs-parent="#filterAccordion">
+                        <div class="accordion-body text-muted small">待数据加载后启用</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card-body border-top border-secondary">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <small class="text-muted">预估匹配: <span id="estimateCount" class="text-info">--</span> 只</small>
+                </div>
+                <button class="btn btn-primary-glow w-100" id="btnScan">
+                    <i class="bi bi-search"></i> 开始扫描
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 右栏：扫描结果 -->
+    <div class="scanner-results">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-list-task"></i> 扫描结果 <span class="text-muted small" id="resultCount">(等待扫描)</span></span>
+                <div class="btn-group btn-group-sm">
+                    <button class="btn btn-outline-secondary" disabled><i class="bi bi-download"></i> 导出</button>
+                    <button class="btn btn-outline-secondary" disabled><i class="bi bi-star"></i> 批量+自选</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="text-center text-muted py-5">
+                    <i class="bi bi-search" style="font-size: 3rem;"></i>
+                    <div class="mt-3">点击"开始扫描"或选择左侧预设</div>
+                    <div class="small mt-2">数据库初始化完成后扫描器才能工作</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+// 数字输入框范围限制（合法性校验）
+document.querySelectorAll('input[type="number"][data-range]').forEach(input => {
+    input.addEventListener('blur', () => {
+        let v = parseFloat(input.value);
+        const min = parseFloat(input.min);
+        const max = parseFloat(input.max);
+        if (isNaN(v)) v = min;
+        if (v < min) v = min;
+        if (v > max) v = max;
+        input.value = v;
+    });
+});
+
+document.getElementById('btnReset')?.addEventListener('click', () => {
+    if (confirm('重置所有筛选条件？')) {
+        location.reload();
+    }
+});
+</script>
+<script src="/static/js/scanner.js"></script>
+{% endblock %}

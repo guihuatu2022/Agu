@@ -1,0 +1,277 @@
+{% extends "base.html" %}
+{% block title %}设置 · 股票趋势分析{% endblock %}
+
+{% block content %}
+<div class="row g-3">
+    <!-- 数据库初始化 -->
+    <div class="col-12 col-lg-7">
+        <div class="card">
+            <div class="card-header"><i class="bi bi-database"></i> 数据库初始化</div>
+            <div class="card-body">
+                <p class="small text-muted mb-2">
+                    首次部署时执行。将拉取全市场约5300只股票最近 500 天的历史数据。
+                </p>
+                <div class="alert alert-warning small mb-3">
+                    ⚠️ 预计耗时 30~60 分钟（取决于网络速度），过程中请勿关闭浏览器。<br>
+                    总接口调用约 2000 次，已做严格频控保证不超tushare限制。
+                </div>
+                <button class="btn btn-primary-glow" id="btnInitDb">
+                    <i class="bi bi-play-fill"></i> 一键初始化
+                </button>
+
+                <div id="initProgressArea" class="mt-3" style="display:none">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <small class="text-muted">进度</small>
+                        <small class="text-info" id="initProgressText">0%</small>
+                    </div>
+                    <div class="progress mb-2" style="height: 24px;">
+                        <div id="initProgressBar"
+                             class="progress-bar progress-bar-striped progress-bar-animated bg-info"
+                             style="width: 0%">0%</div>
+                    </div>
+                    <div class="small text-muted mb-1">实时日志：</div>
+                    <div id="initLog" class="text-mono small bg-dark p-2 rounded border border-secondary"
+                         style="height: 250px; overflow-y: auto; font-size: 0.78rem;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 定时任务 -->
+    <div class="col-12 col-lg-5">
+        <div class="card">
+            <div class="card-header"><i class="bi bi-clock"></i> 定时任务（北京时间）</div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label class="form-label small">第一批：行情+基本面+指数</label>
+                    <input type="time" class="form-control" id="time1" value="17:30">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small">第二批：资金流向</label>
+                    <input type="time" class="form-control" id="time2" value="19:00">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small">第三批：分析+生成报告</label>
+                    <input type="time" class="form-control" id="time3" value="19:30">
+                </div>
+                <div class="alert alert-info small mb-3 py-2">
+                    💡 修改时间需重启服务生效（systemctl restart gupiao）
+                </div>
+                <hr>
+                <div class="small text-muted mb-2">手动触发：</div>
+                <div class="d-grid gap-2">
+                    <button class="btn btn-sm btn-outline-secondary" data-batch="first">
+                        <i class="bi bi-play"></i> 跑第一批（行情）
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary" data-batch="second">
+                        <i class="bi bi-play"></i> 跑第二批（资金）
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary" data-batch="third">
+                        <i class="bi bi-play"></i> 跑第三批（分析）
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 数据状态 -->
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-info-circle"></i> 数据库状态</span>
+                <button class="btn btn-sm btn-outline-secondary" id="btnRefreshStats">
+                    <i class="bi bi-arrow-clockwise"></i> 刷新
+                </button>
+            </div>
+            <div class="card-body">
+                <div class="row g-3 text-center">
+                    <div class="col-6 col-md-3">
+                        <div class="text-muted small">股票数</div>
+                        <div class="h4" data-stat="stock_count">--</div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <div class="text-muted small">日线记录</div>
+                        <div class="h4" data-stat="daily_count">--</div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <div class="text-muted small">资金流记录</div>
+                        <div class="h4" data-stat="moneyflow_count">--</div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <div class="text-muted small">最新数据</div>
+                        <div class="h4" data-stat="latest_date">--</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 任务历史 -->
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header"><i class="bi bi-list-ul"></i> 最近任务</div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-dark table-sm mb-0">
+                        <thead>
+                            <tr>
+                                <th>类型</th>
+                                <th>日期</th>
+                                <th>状态</th>
+                                <th>开始时间</th>
+                                <th>耗时(秒)</th>
+                                <th>API调用</th>
+                                <th>说明</th>
+                            </tr>
+                        </thead>
+                        <tbody id="taskTableBody">
+                            <tr><td colspan="7" class="text-center text-muted py-3">加载中...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function () {
+    const $ = (s) => document.querySelector(s);
+    const fmt = (n) => n == null ? '--' : (typeof n === 'number' ? n.toLocaleString() : n);
+
+    // ---- 数据库统计 ----
+    async function loadStats() {
+        try {
+            const r = await fetch('/api/admin/stats');
+            const data = await r.json();
+            for (const el of document.querySelectorAll('[data-stat]')) {
+                const key = el.dataset.stat;
+                el.textContent = fmt(data[key]);
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
+    async function loadTasks() {
+        try {
+            const r = await fetch('/api/admin/tasks/recent?limit=10');
+            const tasks = await r.json();
+            const tbody = $('#taskTableBody');
+            if (!tasks.length) {
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-3">暂无任务记录</td></tr>';
+                return;
+            }
+            const statusBadge = (s) => {
+                const m = { running: 'bg-info', success: 'bg-success', failed: 'bg-danger', partial: 'bg-warning' };
+                return `<span class="badge ${m[s] || 'bg-secondary'}">${s}</span>`;
+            };
+            tbody.innerHTML = tasks.map(t => `
+                <tr>
+                    <td>${t.task_type}</td>
+                    <td>${t.task_date || '-'}</td>
+                    <td>${statusBadge(t.status)}</td>
+                    <td class="text-mono small">${(t.started_at || '').replace('T', ' ').substr(0, 19)}</td>
+                    <td>${t.duration_seconds || '-'}</td>
+                    <td>${t.api_calls || '-'}</td>
+                    <td class="small text-muted">${t.progress_msg || ''}</td>
+                </tr>
+            `).join('');
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
+    // ---- 一键初始化（SSE 流式日志）----
+    $('#btnInitDb')?.addEventListener('click', async () => {
+        if (!confirm('确认开始初始化？这将耗时 30~60 分钟，期间不要关闭浏览器。')) return;
+
+        const area = $('#initProgressArea');
+        const bar = $('#initProgressBar');
+        const text = $('#initProgressText');
+        const log = $('#initLog');
+        const btn = $('#btnInitDb');
+
+        area.style.display = 'block';
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 初始化中...';
+        log.innerHTML = '';
+
+        try {
+            const resp = await fetch('/api/admin/init', { method: 'POST' });
+            if (!resp.ok || !resp.body) throw new Error('启动失败');
+
+            const reader = resp.body.getReader();
+            const decoder = new TextDecoder('utf-8');
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+
+                let lines = buffer.split('\n\n');
+                buffer = lines.pop();
+
+                for (const line of lines) {
+                    if (!line.startsWith('data:')) continue;
+                    try {
+                        const data = JSON.parse(line.slice(5).trim());
+                        if (data.progress != null) {
+                            const p = Math.round(data.progress);
+                            bar.style.width = p + '%';
+                            bar.textContent = p + '%';
+                            text.textContent = p + '%';
+                        }
+                        const t = new Date().toLocaleTimeString();
+                        const cls = data.error ? 'text-danger' : '';
+                        log.innerHTML += `<div class="${cls}">[${t}] ${data.msg || ''}</div>`;
+                        log.scrollTop = log.scrollHeight;
+                    } catch (e) {
+                        // 忽略解析错误
+                    }
+                }
+            }
+
+            btn.innerHTML = '<i class="bi bi-check-circle"></i> 初始化完成';
+            btn.classList.remove('btn-primary-glow');
+            btn.classList.add('btn-success');
+            loadStats();
+            loadTasks();
+        } catch (e) {
+            alert('初始化失败: ' + e.message);
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-play-fill"></i> 重试';
+        }
+    });
+
+    // ---- 手动触发批次 ----
+    document.querySelectorAll('button[data-batch]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const b = btn.dataset.batch;
+            if (!confirm(`确认手动触发"第${ {first:'一',second:'二',third:'三'}[b] }批"任务？`)) return;
+            btn.disabled = true;
+            try {
+                const r = await fetch(`/api/admin/update/${b}`, { method: 'POST' });
+                const data = await r.json();
+                alert('完成: ' + JSON.stringify(data, null, 2).substring(0, 500));
+                loadTasks();
+            } catch (e) {
+                alert('失败: ' + e.message);
+            } finally {
+                btn.disabled = false;
+            }
+        });
+    });
+
+    $('#btnRefreshStats')?.addEventListener('click', () => { loadStats(); loadTasks(); });
+
+    // 启动
+    loadStats();
+    loadTasks();
+    setInterval(() => { loadStats(); loadTasks(); }, 60000);
+})();
+</script>
+{% endblock %}

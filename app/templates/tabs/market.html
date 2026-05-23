@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}大盘分析 · 股票趋势分析{% endblock %}
+
+{% block content %}
+<div class="card mb-3">
+    <div class="card-header">
+        <i class="bi bi-bar-chart-line"></i> 多指数全景（10个主要指数 + 13种浪型识别）
+    </div>
+    <div class="card-body">
+        <div class="text-muted small mb-3">
+            按今日 / 5日 / 10日 / 20日 多窗口对比，自动识别每个指数的形态（主升浪初期/中期/加速期、顶部构筑、底部反转等13种）。
+        </div>
+        <div class="text-center text-muted py-5">
+            <i class="bi bi-database-x" style="font-size: 3rem;"></i>
+            <div class="mt-3">数据未加载</div>
+            <div class="small mt-2">请先到"设置"页完成数据库初始化</div>
+        </div>
+    </div>
+</div>
+
+<div class="card mb-3">
+    <div class="card-header">
+        <i class="bi bi-flag"></i> 市场风格判断
+    </div>
+    <div class="card-body">
+        <div class="text-muted small">
+            根据大盘 vs 中小盘、价值 vs 成长的相对强弱自动判断当前市场风格。
+        </div>
+        <div class="text-muted py-4 text-center">--</div>
+    </div>
+</div>
+{% endblock %}

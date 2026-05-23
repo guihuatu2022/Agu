@@ -1,0 +1,39 @@
+# 配置和密钥
+.env
+.env.local
+config_local.py
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# 运行产物
+logs/
+reports/
+cache/
+*.log
+*.pid
+
+# 数据库本地副本
+*.sqlite
+*.db
+backup/
