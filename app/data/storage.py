@@ -83,8 +83,11 @@ def save_stock_meta(session: Session, df: pd.DataFrame) -> int:
     """保存股票元信息。"""
     if df.empty:
         return 0
+    from datetime import datetime
+    df = df.copy()
+    df["updated_at"] = datetime.now()
     cols = ["ts_code", "symbol", "name", "area", "industry",
-            "list_date", "market", "is_st", "delisted"]
+            "list_date", "market", "is_st", "delisted", "updated_at"]
     return upsert_dataframe(session, "stock_meta", df, ["ts_code"], cols)
 
 
