@@ -38,8 +38,28 @@ def upsert_dataframe(
         return 0
 
     df = df[columns].copy()
-    # 把 NaN 替换为 None（MySQL 接受 NULL）
-    df = df.where(pd.notna(df), None)
+
+    # 关键修复：彻底清理 NaN/NaT/inf
+    # 1. 用 replace 把 inf 替换成 None
+    import numpy as np
+    df = df.replace([np.inf, -np.inf], np.nan)
+    # 2. object 列中可能有字符串 'nan'，也要处理
+    # 3. 转换成 records 时，每行手动检查
+    rows = df.to_dict(orient="records")
+    cleaned_rows = []
+    for row in rows:
+        cleaned = {}
+        for k, v in row.items():
+            # NaN/NaT 检查
+            if v is None:
+                cleaned[k] = None
+            elif isinstance(v, float) and (pd.isna(v) or v != v):  # NaN
+                cleaned[k] = None
+            elif pd.api.types.is_scalar(v) and pd.isna(v):
+                cleaned[k] = None
+            else:
+                cleaned[k] = v
+        cleaned_rows.append(cleaned)
 
     update_cols = [c for c in columns if c not in primary_keys]
 
@@ -54,10 +74,9 @@ def upsert_dataframe(
     )
 
     total = 0
-    rows = df.to_dict(orient="records")
 
-    for i in range(0, len(rows), chunk_size):
-        chunk = rows[i:i + chunk_size]
+    for i in range(0, len(cleaned_rows), chunk_size):
+        chunk = cleaned_rows[i:i + chunk_size]
         try:
             session.execute(text(sql), chunk)
             session.commit()
