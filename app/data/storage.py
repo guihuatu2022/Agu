@@ -5,11 +5,12 @@
 - 用 INSERT ... ON DUPLICATE KEY UPDATE 实现幂等
 - 大批量分块写入（每批 1000 行）
 - DataFrame 列名要和 ORM 字段对齐
+- 自动补时间字段（updated_at 等）
 """
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, datetime
 from typing import Iterable
 
 import pandas as pd
@@ -32,16 +33,6 @@ def upsert_dataframe(
 ) -> int:
     """
     通用 UPSERT：INSERT ... ON DUPLICATE KEY UPDATE
-    
-    参数：
-      session: SQLAlchemy session
-      table_name: 表名
-      df: 数据
-      primary_keys: 主键列名（ON DUPLICATE 时排除这些列）
-      columns: 要写入的列（必须包括主键列）
-      chunk_size: 分块大小
-    
-    返回：成功写入的行数
     """
     if df.empty:
         return 0
@@ -83,7 +74,6 @@ def save_stock_meta(session: Session, df: pd.DataFrame) -> int:
     """保存股票元信息。"""
     if df.empty:
         return 0
-    from datetime import datetime
     df = df.copy()
     df["updated_at"] = datetime.now()
     cols = ["ts_code", "symbol", "name", "area", "industry",
@@ -102,16 +92,17 @@ def save_stock_daily(session: Session, df: pd.DataFrame) -> int:
         "open_qfq", "high_qfq", "low_qfq", "close_qfq",
         "adj_factor", "is_suspended", "is_ex_dividend",
     ]
-    # 缺失列补 None
+    df = df.copy()
+    # tushare 的 change 字段 → change_amt
+    if "change" in df.columns and "change_amt" not in df.columns:
+        df["change_amt"] = df["change"]
+    # 补缺失列
     for c in cols:
         if c not in df.columns:
             if c in ("is_suspended", "is_ex_dividend"):
                 df[c] = False
             else:
                 df[c] = None
-    # tushare 的 change 字段 → change_amt
-    if "change" in df.columns and "change_amt" not in df.columns:
-        df["change_amt"] = df["change"]
     return upsert_dataframe(session, "stock_daily", df,
                             ["ts_code", "trade_date"], cols)
 
@@ -127,6 +118,7 @@ def save_stock_basic_daily(session: Session, df: pd.DataFrame) -> int:
         "total_share", "float_share", "free_share",
         "total_mv", "circ_mv",
     ]
+    df = df.copy()
     for c in cols:
         if c not in df.columns:
             df[c] = None
@@ -146,6 +138,7 @@ def save_moneyflow(session: Session, df: pd.DataFrame) -> int:
         "buy_sm_amount", "sell_sm_amount",
         "net_mf_amount", "net_elg_amount",
     ]
+    df = df.copy()
     for c in cols:
         if c not in df.columns:
             df[c] = None
@@ -159,6 +152,7 @@ def save_index_daily(session: Session, df: pd.DataFrame) -> int:
         return 0
     cols = ["ts_code", "trade_date", "open", "high", "low", "close",
             "pct_chg", "vol", "amount"]
+    df = df.copy()
     for c in cols:
         if c not in df.columns:
             df[c] = None
@@ -177,7 +171,7 @@ def get_latest_trade_date(session: Session) -> date | None:
 
 
 def get_db_stats(session: Session) -> dict:
-    """获取数据库统计信息（设置页用）。"""
+    """获取数据库统计信息。"""
     stats = {}
     queries = {
         "stock_count": "SELECT COUNT(*) FROM stock_meta WHERE delisted=0",
