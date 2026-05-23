@@ -33,7 +33,9 @@ logger = logging.getLogger(__name__)
 
 
 # 已存在数据的检查粒度
-EXIST_CHECK_THRESHOLD = 1000  # 某天日线记录 > 此数 = 视为已有数据
+# A股 ≈ 5300 只股票，每日完整数据应该至少有 4000 条记录（部分停牌）
+# 如果某天记录数 < 3000，视为"未完整"，需要重拉
+EXIST_CHECK_THRESHOLD = 3000
 
 
 def _get_existing_dates(table_name: str) -> set[date]:
@@ -268,7 +270,7 @@ async def initialize_database(skip_existing: bool = True) -> AsyncIterator[dict]
                 }
 
             # 让出控制权给事件循环
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0)
 
         # ===== Step 6: 拉概念板块成分 =====
         yield {"step": 6, "total_steps": total_steps, "progress": 96,
