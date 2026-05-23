@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta
 from typing import AsyncIterator, Optional
 
@@ -186,7 +187,7 @@ async def initialize_database(skip_existing: bool = True) -> AsyncIterator[dict]
             msg += f"，已存在 {skipped_count} 天将跳过（断点续传）"
         yield {"step": 4, "total_steps": total_steps, "progress": 18, "msg": msg}
 
-        # ===== Step 5: 按日期模式批量拉行情数据 =====
+        # ===== Step 5: 按日期模式批量拉行情数据（4接口并发）=====
         progress_start = 18
         progress_end = 95
         progress_per_day = (progress_end - progress_start) / max(len(trading_days), 1)
@@ -195,82 +196,101 @@ async def initialize_database(skip_existing: bool = True) -> AsyncIterator[dict]
         failed_days = []
         skipped_days = 0
 
-        for i, td in enumerate(trading_days):
-            day_progress = int(progress_start + (i + 1) * progress_per_day)
-            td_date = trading_dates[i]
+        # 用线程池并发拉取（每个日期 4 个接口同时跑）
+        executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="tushare")
 
-            # 断点续传：3类数据都已存在则整天跳过
-            if (skip_existing and td_date in existing_daily
-                    and td_date in existing_basic and td_date in existing_flow):
-                skipped_days += 1
-                if i % 20 == 0:
-                    yield {
-                        "step": 5, "total_steps": total_steps,
-                        "progress": day_progress,
-                        "msg": f"⏭ 跳过已有数据 {td} ({i+1}/{len(trading_days)})",
-                    }
-                continue
+        def _fetch_one_day(td_date_str: str, td_date_obj: date) -> dict:
+            """并发拉一天的所有数据。返回 {daily, adj, basic, flow}"""
+            futures = {}
+            if td_date_obj not in existing_daily:
+                futures["daily"] = executor.submit(fetcher.fetch_daily_market, td_date_str)
+                futures["adj"] = executor.submit(fetcher.fetch_adj_factor_market, td_date_str)
+            if td_date_obj not in existing_basic:
+                futures["basic"] = executor.submit(fetcher.fetch_daily_basic_market, td_date_str)
+            if td_date_obj not in existing_flow:
+                futures["flow"] = executor.submit(fetcher.fetch_moneyflow_market, td_date_str)
 
-            try:
-                # 5.1 日线（如果该日期已有则跳过）
-                if td_date not in existing_daily:
-                    df_daily = fetcher.fetch_daily_market(td)
-                    api_calls += 1
-                    df_adj = fetcher.fetch_adj_factor_market(td)
-                    api_calls += 1
+            results = {}
+            for k, fut in futures.items():
+                try:
+                    results[k] = fut.result(timeout=120)
+                except Exception as e:
+                    results[k] = e
+            return results
 
-                    if not df_daily.empty:
-                        if not df_adj.empty and "adj_factor" in df_adj.columns:
-                            df_daily = df_daily.merge(
-                                df_adj[["ts_code", "trade_date", "adj_factor"]],
-                                on=["ts_code", "trade_date"], how="left",
-                            )
-                        if "change" in df_daily.columns:
-                            df_daily["change_amt"] = df_daily["change"]
-                        with session_scope() as s:
+        try:
+            for i, td in enumerate(trading_days):
+                day_progress = int(progress_start + (i + 1) * progress_per_day)
+                td_date = trading_dates[i]
+
+                # 断点续传：3类数据都已存在则整天跳过
+                if (skip_existing and td_date in existing_daily
+                        and td_date in existing_basic and td_date in existing_flow):
+                    skipped_days += 1
+                    if i % 50 == 0:
+                        yield {
+                            "step": 5, "total_steps": total_steps,
+                            "progress": day_progress,
+                            "msg": f"⏭ 跳过已有数据 {td} ({i+1}/{len(trading_days)})",
+                        }
+                    await asyncio.sleep(0)
+                    continue
+
+                try:
+                    # 并发拉取
+                    results = _fetch_one_day(td, td_date)
+                    api_calls += len(results)
+
+                    # 入库
+                    df_daily = results.get("daily")
+                    df_adj = results.get("adj")
+                    df_basic = results.get("basic")
+                    df_flow = results.get("flow")
+
+                    with session_scope() as s:
+                        if isinstance(df_daily, pd.DataFrame) and not df_daily.empty:
+                            if isinstance(df_adj, pd.DataFrame) and not df_adj.empty \
+                                    and "adj_factor" in df_adj.columns:
+                                df_daily = df_daily.merge(
+                                    df_adj[["ts_code", "trade_date", "adj_factor"]],
+                                    on=["ts_code", "trade_date"], how="left",
+                                )
+                            if "change" in df_daily.columns:
+                                df_daily["change_amt"] = df_daily["change"]
                             storage.save_stock_daily(s, df_daily)
 
-                # 5.2 基本面
-                if td_date not in existing_basic:
-                    df_basic = fetcher.fetch_daily_basic_market(td)
-                    api_calls += 1
-                    if not df_basic.empty:
-                        with session_scope() as s:
+                        if isinstance(df_basic, pd.DataFrame) and not df_basic.empty:
                             storage.save_stock_basic_daily(s, df_basic)
 
-                # 5.3 资金流向
-                if td_date not in existing_flow:
-                    df_flow = fetcher.fetch_moneyflow_market(td)
-                    api_calls += 1
-                    if not df_flow.empty:
-                        with session_scope() as s:
+                        if isinstance(df_flow, pd.DataFrame) and not df_flow.empty:
                             storage.save_moneyflow(s, df_flow)
 
-                success_days += 1
+                    success_days += 1
 
-                # 每5个日期推一次进度
-                if i % 5 == 0 or i == len(trading_days) - 1:
+                    # 每5个日期推一次进度
+                    if i % 5 == 0 or i == len(trading_days) - 1:
+                        yield {
+                            "step": 5, "total_steps": total_steps,
+                            "progress": day_progress,
+                            "msg": (f"📥 进度 {i+1}/{len(trading_days)} ({td}) | "
+                                    f"成功 {success_days} 跳过 {skipped_days} 失败 {len(failed_days)} | "
+                                    f"API {api_calls} 次"),
+                        }
+                        update_status(day_progress,
+                                      f"日期 {td} ({i+1}/{len(trading_days)})")
+
+                except Exception as e:
+                    failed_days.append(td)
+                    logger.warning(f"日期 {td} 拉取失败: {e}")
                     yield {
                         "step": 5, "total_steps": total_steps,
                         "progress": day_progress,
-                        "msg": (f"📥 进度 {i+1}/{len(trading_days)} ({td}) | "
-                                f"成功 {success_days} 跳过 {skipped_days} 失败 {len(failed_days)} | "
-                                f"API {api_calls} 次"),
+                        "msg": f"⚠️ 日期 {td} 失败（已跳过，可重试）: {str(e)[:80]}",
                     }
-                    update_status(day_progress,
-                                  f"日期 {td} ({i+1}/{len(trading_days)})")
 
-            except Exception as e:
-                failed_days.append(td)
-                logger.warning(f"日期 {td} 拉取失败: {e}")
-                yield {
-                    "step": 5, "total_steps": total_steps,
-                    "progress": day_progress,
-                    "msg": f"⚠️ 日期 {td} 失败（已跳过，可重试）: {str(e)[:80]}",
-                }
-
-            # 让出控制权给事件循环
-            await asyncio.sleep(0)
+                await asyncio.sleep(0)
+        finally:
+            executor.shutdown(wait=False)
 
         # ===== Step 6: 拉概念板块成分 =====
         yield {"step": 6, "total_steps": total_steps, "progress": 96,
