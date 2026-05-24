@@ -1,11 +1,10 @@
 """
 每日增量更新：每天 17:30 / 19:00 / 19:30 三批跑。
 
-特点：
-- 只拉当天数据（5次接口调用搞定）
-- 自动判断是否交易日
+关键设计：
+- 不指定日期时，自动用最近的交易日（手动触发也能跑出结果）
+- 指定日期时，严格检查（避免误传非交易日）
 - 失败的接口标记重试
-- 全部完成后触发分析计算
 """
 from __future__ import annotations
 
@@ -24,6 +23,31 @@ logger = logging.getLogger(__name__)
 
 def _today_str() -> str:
     return datetime.now().strftime("%Y%m%d")
+
+
+def _resolve_date(date_str: Optional[str]) -> tuple[Optional[str], str]:
+    """
+    解析要使用的日期。
+    
+    返回 (date_str, info_msg):
+      - date_str=None: 跳过任务（非交易日且没历史交易日）
+      - date_str=具体日期: 实际要处理的交易日
+    """
+    if date_str:
+        # 用户指定了日期，必须是交易日
+        if fetcher.is_trading_day(date_str):
+            return date_str, f"使用指定日期 {date_str}"
+        return None, f"指定日期 {date_str} 非交易日"
+
+    # 未指定 → 优先用今天，否则最近交易日
+    today = _today_str()
+    if fetcher.is_trading_day(today):
+        return today, f"今天 {today} 是交易日"
+
+    prev = fetcher.get_previous_trading_day(today)
+    if prev:
+        return prev, f"今天非交易日，自动使用最近交易日 {prev}"
+    return None, "找不到任何交易日"
 
 
 def _record_task(task_type: str, task_date: date,
@@ -49,35 +73,28 @@ def _record_task(task_type: str, task_date: date,
 
 def daily_update_first_batch(date_str: Optional[str] = None) -> dict:
     """
-    第一批（17:30）：行情 + 基本面 + 指数 + 复权因子。
+    第一批：行情 + 基本面 + 指数 + 复权因子。
     """
-    date_str = date_str or _today_str()
+    date_str, info = _resolve_date(date_str)
+    logger.info(f"[第一批] {info}")
+
+    if date_str is None:
+        _record_task("daily_first", date.today(), "skipped", info, 0)
+        return {"status": "skipped", "reason": "no_trading_day", "msg": info}
+
     api_calls = 0
     errors = []
-
-    # 检查是否交易日
-    try:
-        if not fetcher.is_trading_day(date_str):
-            msg = f"非交易日 {date_str}，跳过"
-            logger.info(msg)
-            _record_task("daily_first", date.today(), "success", msg, 1)
-            return {"status": "skipped", "reason": "non_trading_day", "date": date_str}
-        api_calls += 1
-    except Exception as e:
-        logger.error(f"检查交易日失败: {e}")
-
     started = datetime.now()
 
-    # 1. 日线
+    # 1. 日线 + 复权因子
     try:
         df_daily = fetcher.fetch_daily_market(date_str)
         api_calls += 1
-        # 复权因子
         df_adj = fetcher.fetch_adj_factor_market(date_str)
         api_calls += 1
 
         if not df_daily.empty:
-            if not df_adj.empty:
+            if not df_adj.empty and "adj_factor" in df_adj.columns:
                 df_daily = df_daily.merge(
                     df_adj[["ts_code", "trade_date", "adj_factor"]],
                     on=["ts_code", "trade_date"], how="left",
@@ -90,7 +107,7 @@ def daily_update_first_batch(date_str: Optional[str] = None) -> dict:
         else:
             errors.append("daily 返回空")
     except Exception as e:
-        logger.exception(f"日线拉取失败")
+        logger.exception("日线拉取失败")
         errors.append(f"daily: {e}")
 
     # 2. 基本面
@@ -102,15 +119,13 @@ def daily_update_first_batch(date_str: Optional[str] = None) -> dict:
                 storage.save_stock_basic_daily(s, df_basic)
             logger.info(f"基本面入库: {len(df_basic)} 条")
     except Exception as e:
-        logger.exception(f"基本面拉取失败")
+        logger.exception("基本面拉取失败")
         errors.append(f"daily_basic: {e}")
 
     # 3. 指数
-    end_date = date_str
-    start_date = date_str
     for ts_code, name in fetcher.INDEX_LIST:
         try:
-            df_idx = fetcher.fetch_index_daily(ts_code, start_date, end_date)
+            df_idx = fetcher.fetch_index_daily(ts_code, date_str, date_str)
             api_calls += 1
             if not df_idx.empty:
                 with session_scope() as s:
@@ -120,7 +135,7 @@ def daily_update_first_batch(date_str: Optional[str] = None) -> dict:
 
     duration = (datetime.now() - started).total_seconds()
     status = "success" if not errors else ("partial" if api_calls > 5 else "failed")
-    msg = f"完成。API调用 {api_calls} 次, 错误 {len(errors)} 个"
+    msg = f"日期={date_str}，API调用={api_calls}，错误={len(errors)}"
     _record_task("daily_first", date.today(), status, msg, api_calls,
                  error="\n".join(errors[:5]) if errors else None)
 
@@ -129,25 +144,23 @@ def daily_update_first_batch(date_str: Optional[str] = None) -> dict:
         "date": date_str,
         "api_calls": api_calls,
         "duration_seconds": duration,
-        "errors": errors,
+        "errors": errors[:10],
     }
 
 
 def daily_update_second_batch(date_str: Optional[str] = None) -> dict:
     """
-    第二批（19:00）：资金流向（晚到的接口）。
+    第二批：资金流向。
     """
-    date_str = date_str or _today_str()
+    date_str, info = _resolve_date(date_str)
+    logger.info(f"[第二批] {info}")
+
+    if date_str is None:
+        _record_task("daily_second", date.today(), "skipped", info, 0)
+        return {"status": "skipped", "reason": "no_trading_day", "msg": info}
+
     api_calls = 0
     errors = []
-
-    try:
-        if not fetcher.is_trading_day(date_str):
-            return {"status": "skipped", "reason": "non_trading_day"}
-        api_calls += 1
-    except Exception as e:
-        logger.error(e)
-
     started = datetime.now()
 
     try:
@@ -158,13 +171,13 @@ def daily_update_second_batch(date_str: Optional[str] = None) -> dict:
                 storage.save_moneyflow(s, df_flow)
             logger.info(f"资金流入库: {len(df_flow)} 条")
     except Exception as e:
-        logger.exception(f"资金流拉取失败")
+        logger.exception("资金流拉取失败")
         errors.append(f"moneyflow: {e}")
 
     duration = (datetime.now() - started).total_seconds()
     status = "success" if not errors else "failed"
     _record_task("daily_second", date.today(), status,
-                 f"完成。API调用 {api_calls} 次", api_calls,
+                 f"日期={date_str}，API={api_calls}", api_calls,
                  error="\n".join(errors) if errors else None)
 
     return {
@@ -178,28 +191,24 @@ def daily_update_second_batch(date_str: Optional[str] = None) -> dict:
 
 def daily_update_third_batch(date_str: Optional[str] = None) -> dict:
     """
-    第三批（19:30）：分析计算 + 报告生成。
-    
-    本地计算：
-    - 计算概念板块每日热度（不调接口）
-    - 计算每只股票的阶段、机会等级
-    - 生成大盘日报
+    第三批：分析计算。
+    本地计算（不调 API）：
+    - 概念板块每日热度
+    - 全市场个股阶段+机会等级
     """
-    date_str = date_str or _today_str()
+    date_str, info = _resolve_date(date_str)
+    logger.info(f"[第三批] {info}")
+
+    if date_str is None:
+        _record_task("daily_third", date.today(), "skipped", info, 0)
+        return {"status": "skipped", "reason": "no_trading_day", "msg": info}
+
     started = datetime.now()
-
-    try:
-        if not fetcher.is_trading_day(date_str):
-            return {"status": "skipped", "reason": "non_trading_day"}
-    except Exception:
-        pass
-
     end_date = datetime.strptime(date_str, "%Y%m%d").date()
 
     # 1. 计算概念板块每日热度
     try:
         from . import sector_data
-        from ..database import session_scope
         with session_scope() as s:
             sector_result = sector_data.compute_concept_daily(s, end_date)
         logger.info(f"概念板块热度计算: {sector_result}")
@@ -214,10 +223,10 @@ def daily_update_third_batch(date_str: Optional[str] = None) -> dict:
         logger.exception("分析计算失败")
         _record_task("daily_third", date.today(), "failed",
                      f"分析失败: {e}", 0, error=str(e))
-        return {"status": "failed", "error": str(e)}
+        return {"status": "failed", "error": str(e), "date": date_str}
 
     duration = (datetime.now() - started).total_seconds()
-    msg = f"分析完成: {result.get('analyzed_count', 0)} 只股票"
+    msg = f"日期={date_str}，分析={result.get('analyzed_count', 0)} 只"
     _record_task("daily_third", date.today(), "success", msg, 0)
 
     return {
